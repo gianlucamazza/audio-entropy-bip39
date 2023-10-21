@@ -38,16 +38,7 @@ During execution, the application will prompt you to speak into the microphone a
 
 ## Example Output
 
-```bash
-Entropy: 7bdcfaebbafb0365553c2f3fba9b9bccdd8be86deba806ae91d1a8a7249cc2ba
-Derived key: 1c98b1fea2a15f95e0faf7c0295a397b63ed3a1a91f81643da7dd193a60e704f
-Recording. Speak into the microphone.
-[###                                               ]
-Recording complete. Processing...
-Audio hash: 2b7403769a83516d2aa1d8354eed51eaa6d2c3d21262239d9549db7cbd595212
-Combined hash: 7c04f865fa40fac3310a14c1d91b30fd455f158babff73e097ac3569f5def878
-Mnemonic: lab chief bonus virus autumn ghost service dream scrub silver slow whisper field member concert lend initial again twelve hello palm urge tiger barely
-```
+[![asciicast](https://asciinema.org/a/SCMPSGEMerTMeT1oPOz76pehm.png)](https://asciinema.org/a/SCMPSGEMerTMeT1oPOz76pehm)
 
 Security Considerations
 While adding entropy from audio provides an additional security layer, it's vital to note that the quality of entropy will depend on environmental conditions and the microphone hardware's quality. This method should be used as an extra security layer in conjunction with other reliable entropy generation methods.
