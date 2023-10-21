@@ -1,4 +1,4 @@
-module github.com/gianlucamazza/voice-bip39
+module github.com/gianlucamazza/audio-entropy-bip39
 
 go 1.20
 
