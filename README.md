@@ -40,9 +40,8 @@ During execution, the application will prompt you to speak into the microphone a
 
 [![asciicast](https://asciinema.org/a/SCMPSGEMerTMeT1oPOz76pehm.png)](https://asciinema.org/a/SCMPSGEMerTMeT1oPOz76pehm)
 
-Security Considerations
+## Security Considerations
 While adding entropy from audio provides an additional security layer, it's vital to note that the quality of entropy will depend on environmental conditions and the microphone hardware's quality. This method should be used as an extra security layer in conjunction with other reliable entropy generation methods.
 
-Contributing
-Contributions, enhancements, and bug reports are always welcome. Please refer to the contribution guidelines for more details.
-
+## Contributing
+Contributions, enhancements, and bug reports are always welcome.
