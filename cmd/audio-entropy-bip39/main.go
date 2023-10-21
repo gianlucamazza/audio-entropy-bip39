@@ -22,7 +22,6 @@ func main() {
 	var debugMode bool
 	flag.BoolVar(&debugMode, "debug", debug, "Enable debug mode")
 	flag.Parse()
-	fmt.Printf("Debug mode is: %t\n", debugMode) // Aggiungi questa riga
 
 	// Set the debug print function.
 	debugPrint := func(format string, args ...interface{}) {
