@@ -1,3 +1,7 @@
 dist/
 mnemonic.txt
 audio-data.wav
+
+# IDE files
+.idea/
+.vscode/

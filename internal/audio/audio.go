@@ -3,14 +3,15 @@
 package audio
 
 import (
+	"errors"
 	"fmt"
-	"log"
-	"math"
-	"sync"
-	"time"
-
 	"github.com/gianlucamazza/audio-entropy-bip39/internal/utils"
 	"github.com/gordonklaus/portaudio"
+	"log"
+	"math"
+	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -21,7 +22,7 @@ const (
 
 // AudioStream is an interface that represents an audio stream.
 type AudioStream interface {
-	Read() (int, error)
+	Read() error
 	Start() error
 	Stop() error
 	Close() error
@@ -35,25 +36,30 @@ type ConcreteAudioStream struct {
 
 // NewConcreteAudioStream creates a new ConcreteAudioStream.
 func NewConcreteAudioStream(bufferSize int) (*ConcreteAudioStream, func(), error) {
-	// Ensure PortAudio is initialized before creating the stream.
-	if err := portaudio.Initialize(); err != nil {
+	// Initialize PortAudio once during the program lifecycle.
+	err := portaudio.Initialize()
+	if err != nil {
 		return nil, nil, fmt.Errorf("error initializing PortAudio: %w", err)
 	}
 
+	// Buffer for incoming audio.
+	input := make([]float32, bufferSize)
+
 	// Updated stream creation to accommodate input processing.
-	input := make([]float32, bufferSize) // Buffer for incoming audio.
-	stream, err := portaudio.OpenDefaultStream(1, 0, sampleRate, bufferSize, input)
+	stream, err := portaudio.OpenDefaultStream(1, 0, sampleRate, bufferSize, &input)
 	if err != nil {
-		portaudio.Terminate() // Properly terminate PortAudio if there's an error.
+		portaudio.Terminate() // It's important to terminate after a failed initialization.
 		return nil, nil, fmt.Errorf("error opening default stream: %w", err)
 	}
 
-	// Create a cleanup function that will terminate PortAudio and close the stream.
+	// Create a cleanup function.
 	cleanup := func() {
-		if err := stream.Close(); err != nil {
+		err := stream.Close()
+		if err != nil {
 			log.Printf("Error closing the stream: %v", err)
 		}
-		if err := portaudio.Terminate(); err != nil {
+		err = portaudio.Terminate()
+		if err != nil {
 			log.Printf("Error terminating PortAudio: %v", err)
 		}
 	}
@@ -61,19 +67,20 @@ func NewConcreteAudioStream(bufferSize int) (*ConcreteAudioStream, func(), error
 	return &ConcreteAudioStream{stream: stream, buffer: input}, cleanup, nil
 }
 
-// Read reads from the audio stream.
-func (cas *ConcreteAudioStream) Read() (int, error) {
-	// Read from the stream into the buffer.
+// Read from the audio stream into the buffer.
+// Read fills the buffer with audio data.
+func (cas *ConcreteAudioStream) Read() error {
 	err := cas.stream.Read()
 	if err != nil {
-		return 0, fmt.Errorf("error reading from audio stream: %w", err)
+		if err != portaudio.InputOverflowed {
+			return fmt.Errorf("error reading from audio stream: %w", err)
+		}
+		log.Printf("Input overflow occurred: %v", err)
 	}
-
-	// Number of frames read.
-	return len(cas.buffer), nil
+	return nil
 }
 
-// Close closes the audio stream.
+// Close the audio stream.
 func (cas *ConcreteAudioStream) Close() error {
 	if cas.stream != nil {
 		err := cas.stream.Close()
@@ -106,90 +113,128 @@ func NewVolumeBar() *VolumeBar {
 
 // Update updates the volume bar.
 func (vb *VolumeBar) Update(volume float32) {
-	// Calculate the number of bars to display.
-	vb.BarCount = int(math.Round(float64(volume * maxBarCount)))
+	const maxVolume = 1.0
+	volume = volume / maxVolume
+
+	vb.BarCount = int(volume * float32(maxBarCount))
+
+	if vb.BarCount < 0 {
+		vb.BarCount = 0
+	} else if vb.BarCount > maxBarCount {
+		vb.BarCount = maxBarCount
+	}
+}
+
+// Draw draws the volume bar.
+func (vb *VolumeBar) Draw() string {
+	bar := strings.Repeat("#", vb.BarCount)
+	return fmt.Sprintf("[%s%s]", bar, strings.Repeat(" ", maxBarCount-vb.BarCount))
 }
 
 // RecordAudio performs audio recording and returns the recorded data.
 func RecordAudio(stream AudioStream, calculateVolumeFunc func(buffer []float32) (float32, error)) ([]byte, error) {
 	bufferSize := sampleRate * numSeconds
-	fullBuffer := make([]float32, 0, bufferSize) // Buffer to store complete recording.
+	fullBuffer := make([]float32, 0, bufferSize)
 
 	fmt.Println("Recording. Speak into the microphone...")
 
+	// Start the audio stream.
 	if err := stream.Start(); err != nil {
 		return nil, fmt.Errorf("error starting audio stream: %w", err)
 	}
-	defer stream.Stop()
+	defer func() {
+		err := stream.Stop() // Ensure the stream is stopped.
+		if err != nil {
+			log.Printf("Error stopping audio stream: %v", err)
+		}
+	}()
 
 	var wg sync.WaitGroup
-	done := make(chan struct{})
-	errChan := make(chan error, 1)
+	done := make(chan bool)
+	errChan := make(chan error)
 
+	// Recording routine.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 
+		fmt.Println("Press Ctrl-C to stop recording...")
 		for {
 			select {
 			case <-done:
 				return
 			default:
-				// Read from the stream.
-				n, err := stream.Read()
+				// Read from the audio stream.
+				err := stream.Read()
 				if err != nil {
-					errChan <- err
+					errChan <- fmt.Errorf("error reading from audio stream: %w", err)
 					return
 				}
 
-				// Append the read data to the full buffer.
-				fullBuffer = append(fullBuffer, stream.(*ConcreteAudioStream).buffer[:n]...)
-
-				// Calculate the volume and update the display bar.
-				volume, err := calculateVolumeFunc(stream.(*ConcreteAudioStream).buffer[:n])
+				// Calculate the volume.
+				volume, err := calculateVolumeFunc(stream.(*ConcreteAudioStream).buffer)
 				if err != nil {
-					log.Printf("Error calculating volume: %s", err)
-					continue
+					errChan <- fmt.Errorf("error calculating volume: %w", err)
+					return
 				}
 
+				fmt.Printf("\rVolume: %f", volume)
+
+				// Update the volume bar.
 				volumeBar := NewVolumeBar()
 				volumeBar.Update(volume)
-				fmt.Printf("\rVolume: %s", utils.GetVolumeBar(volumeBar.BarCount))
+
+				// Draw the volume bar.
+				fmt.Printf("\r%s", volumeBar.Draw())
 			}
 		}
 	}()
 
-	// Record for the specified duration.
+	// Wait for the recording to complete.
 	timer := time.NewTimer(time.Duration(numSeconds) * time.Second)
 	<-timer.C
 	close(done)
 	wg.Wait()
 
+	// Check for any errors that occurred during recording.
 	select {
 	case err := <-errChan:
-		return nil, err // Handle potential error from the recording goroutine.
+		return nil, err
 	default:
-		// No error, continue.
+		// No errors.
 	}
 
 	fmt.Println("\nRecording complete. Processing...")
 
-	// Convert the recorded float32 data to bytes.
+	// Convert the audio buffer to bytes.
 	audioData := utils.Float32ToByteSlice(fullBuffer)
 
 	return audioData, nil
 }
 
-// CalculateVolume calculates the volume of the audio data.
+// ErrInvalidBuffer indicates an operation on an invalid buffer.
+var ErrInvalidBuffer = errors.New("invalid buffer")
+
+// CalculateVolume calculates the volume of the audio data in decibels.
 func CalculateVolume(buffer []float32) (float32, error) {
-	var sum float32
-	for _, f := range buffer {
-		sum += f * f
+	if len(buffer) == 0 {
+		return 0, ErrInvalidBuffer
 	}
-	rms := float32(sum / float32(len(buffer)))
-	volume := float32(0)
-	if rms > 0 {
-		volume = float32(20 * (1 + math.Log10(float64(rms))))
+
+	var sumSquares float64
+	for _, sample := range buffer {
+		sumSquares += float64(sample) * float64(sample) // Squaring each sample.
 	}
-	return volume, nil
+
+	// Calculate the mean of the squares.
+	meanSquare := sumSquares / float64(len(buffer))
+
+	// Calculate the root of the mean square, i.e., RMS.
+	rms := math.Sqrt(meanSquare)
+
+	// Normalizing the volume so that it fits in a 0-1 range for visualization.
+	// This approach avoids using dB and keeps the volume in a linear scale.
+	normalizedVolume := float32(rms)
+
+	return normalizedVolume, nil
 }
